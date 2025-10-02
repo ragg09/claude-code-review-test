@@ -1,11 +1,9 @@
 name: Manual Auto Comment
-
 on:
   issue_comment:
     types: [created]
   pull_request:
     types: [labeled]
-
 jobs:
   add-auto-comment:
     if: |
@@ -14,11 +12,9 @@ jobs:
        contains(github.event.comment.body, '@auto-comment')) ||
       (github.event_name == 'pull_request' &&
        github.event.label.name == 'auto-comment')
-
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-
     steps:
       - name: Add reaction to acknowledge comment
         if: github.event_name == 'issue_comment'
@@ -31,7 +27,7 @@ jobs:
               comment_id: context.payload.comment.id,
               content: 'eyes'
             })
-
+      
       - name: Set PR number
         id: pr-number
         run: |
@@ -40,8 +36,28 @@ jobs:
           else
             echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
           fi
-
+      
+      - name: Check number of changed files
+        id: check-files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.pr-number.outputs.number }};
+            
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            
+            const fileCount = files.length;
+            console.log(`Number of changed files: ${fileCount}`);
+            
+            core.setOutput('file_count', fileCount);
+            core.setOutput('allowed', fileCount > 2 ? 'true' : 'false');
+      
       - name: Add automated comment to PR
+        if: steps.check-files.outputs.allowed == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -50,4 +66,17 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: 'This is a sample prompt triggered by @auto-comment or the auto-comment label'
+            })
+      
+      - name: Add rejection comment
+        if: steps.check-files.outputs.allowed == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fileCount = '${{ steps.check-files.outputs.file_count }}';
+            github.rest.issues.createComment({
+              issue_number: ${{ steps.pr-number.outputs.number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `Not allowed to comment. This PR only has ${fileCount} changed file(s), but requires more than 5 files changed.`
             })
